@@ -16,56 +16,65 @@ const configParams = {
   max: 20,
   // number of milliseconds to wait before timing out when connecting a new client
   // default : 0
-  idleTimeoutMillis: 30000,
+  idleTimeoutMillis: 60000,
   // number of milliseconds a client must sit idle in the pool and not be checked out before it is disconnected from the backend and discarded
   // default is 10000 (10 seconds)
-  connectionTimeoutMillis: 20000
+  connectionTimeoutMillis: 60000
 }
+
+const checkBox = [] //check client
 
 // 紀錄同一時間發出 request 時間
 const requestTime = recordTime()
 const requestDate = requestTime[0]
 
 async function productInfo(productName) {
-  const pool = await new Pool(configParams)
+  const client = await new Pool(configParams).connect()
   try {
     const query = `SELECT * FROM products WHERE productname = $1`
-    const results = await pool.query(query, [productName])
+    const results = await client.query(query, [productName])
 
     const product = results.rows[0]
 
     return product
   } catch (err) {
     console.log('product err:', err)
+  } finally {
+    client.release()
   }
 }
 
 async function getClients(clientName) {
-  const pool = await new Pool(configParams)
+  const client = await new Pool(configParams).connect()
   try {
     const query = `SELECT * FROM clients WHERE name = $1`
-    const results = await pool.query(query, [clientName])
+    const results = await client.query(query, [clientName])
     const quantity = results.rows[0].quantity // client 索取數量
     const amount = results.rows[0].amount // client 餘額
     return [quantity, amount]
   } catch (err) {
     console.log('client err:', err)
+  } finally {
+    client.release()
   }
 }
 
 async function snapStatusCheck(clientName, productName) {
+  const client = await new Pool(configParams).connect()
+
   try {
-    const pool = await new Pool(configParams)
     // 把請求時間與初步回應時間記錄於 db
     let responseTime = recordTime()
     let responseDate = responseTime[0]
     let getResponseTime = diffTime(requestDate, responseDate)
+
     return sequelize.transaction(
       {
         isolationLevel: Sequelize.Transaction.ISOLATION_LEVELS.SERIALIZABLE
       },
       async (t1) => {
         // const t = await sequelize.transaction()
+
         await snapResult.create(
           {
             name: clientName,
@@ -87,9 +96,9 @@ async function snapStatusCheck(clientName, productName) {
             // const price = product[1] //商品價格
             let restStock = product['quantity']
             const price = product['sellprice']
-            const client = await getClients(clientName)
-            const quantity = client[0] // client 索取數量
-            const amount = client[1] // client 餘額
+            const snapClient = await getClients(clientName)
+            const quantity = snapClient[0] // client 索取數量
+            const amount = snapClient[1] // client 餘額
 
             // check status  transactions
             // 搶到商品
@@ -171,6 +180,7 @@ async function snapStatusCheck(clientName, productName) {
   } catch (err) {
     console.log('transaction err:', err)
   } finally {
+    client.release()
     console.log('Transaction is done.')
   }
 }
@@ -178,28 +188,37 @@ async function snapStatusCheck(clientName, productName) {
 // test case
 async function test() {
   // 9366, 2
-  await snapStatusCheck('Darlene Stehr', '全自動咖啡機')
+  await snapStatusCheck('Darlene Stehr', '黃金脆皮雞腿排')
   // 3910, 2
-  await snapStatusCheck('Ricardo Purdy', '全自動咖啡機')
+  await snapStatusCheck('Ricardo Purdy', '黃金脆皮雞腿排')
   // 8889, 1
-  await snapStatusCheck('Tonya Hermann', '全自動咖啡機')
+  await snapStatusCheck('Tonya Hermann', '黃金脆皮雞腿排')
   // // 8954, 2
-  await snapStatusCheck('Lee Ward', '全自動咖啡機')
+  await snapStatusCheck('Lee Ward', '黃金脆皮雞腿排')
   // // 8783, 3
-  await snapStatusCheck('Dr. Craig Mraz', '全自動咖啡機')
+  await snapStatusCheck('Dr. Craig Mraz', '黃金脆皮雞腿排')
   // // 2348, 2
-  await snapStatusCheck('Claude Romaguera', '全自動咖啡機')
+  await snapStatusCheck('Claude Romaguera', '黃金脆皮雞腿排')
   // // 8639, 3
-  await snapStatusCheck("Isabel O'Reilly", '全自動咖啡機')
+  await snapStatusCheck("Isabel O'Reilly", '黃金脆皮雞腿排')
 }
+// test()
 
 export const handler = async (event) => {
-  //clientName-productName
-  const result = event.Records[0].body.split('-')
-  const clientName = result[0].trim()
-  const productName = result[1].trim()
-  console.log('clientName:', clientName)
-  console.log('productName:', productName)
+  console.log('event:', event)
+  console.log('length:', event.Records.length)
 
-  await snapStatusCheck(clientName, productName)
+  try {
+    const result = event.Records[0].body.split('-')
+
+    const clientName = result[0].trim()
+    const productName = result[1].trim()
+
+    console.log('clientName:', clientName)
+    console.log('productName:', productName)
+
+    await snapStatusCheck(clientName, productName)
+  } catch (err) {
+    console.log('record err:', err)
+  }
 }
