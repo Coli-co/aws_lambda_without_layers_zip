@@ -14,15 +14,11 @@ const configParams = {
   port: process.env.PGPORT,
   // maximum number of clients the pool should contain,default:10
   max: 20,
-  // number of milliseconds to wait before timing out when connecting a new client
-  // default : 0
+  // number of milliseconds to wait before timing out when connecting a new client, default : 0
   idleTimeoutMillis: 60000,
-  // number of milliseconds a client must sit idle in the pool and not be checked out before it is disconnected from the backend and discarded
-  // default is 10000 (10 seconds)
+  // number of milliseconds a client must sit idle in the pool,  default is 10000 (10 seconds)
   connectionTimeoutMillis: 60000
 }
-
-const checkBox = [] //check client
 
 // 紀錄同一時間發出 request 時間
 const requestTime = recordTime()
@@ -89,89 +85,93 @@ async function snapStatusCheck(clientName, productName) {
         )
 
         return sequelize
-          .transaction(async (t2) => {
-            // 檢查商品資訊
-            const product = await productInfo(productName)
-            // let restStock = product[0] // 剩餘庫存
-            // const price = product[1] //商品價格
-            let restStock = product['quantity']
-            const price = product['sellprice']
-            const snapClient = await getClients(clientName)
-            const quantity = snapClient[0] // client 索取數量
-            const amount = snapClient[1] // client 餘額
+          .transaction(
+            {
+              isolationLevel:
+                Sequelize.Transaction.ISOLATION_LEVELS.SERIALIZABLE
+            },
+            async (t2) => {
+              // 檢查商品資訊
+              const product = await productInfo(productName)
+              let restStock = product['quantity']
+              const price = product['sellprice']
+              const snapClient = await getClients(clientName)
+              const quantity = snapClient[0] // client 索取數量
+              const amount = snapClient[1] // client 餘額
 
-            // check status  transactions
-            // 搶到商品
-            if (
-              Number(quantity) <= Number(restStock) &&
-              Number(amount) >= Number(price)
-            ) {
-              // 紀錄 db 處理訂單時間
-              responseTime = recordTime()
-              responseDate = responseTime[0]
-              restStock -= Number(quantity)
+              // check status  transactions
+              // 搶到商品
+              if (
+                Number(quantity) <= Number(restStock) &&
+                Number(amount) >= Number(price)
+              ) {
+                // 紀錄 db 處理訂單時間
+                responseTime = recordTime()
+                responseDate = responseTime[0]
+                restStock -= Number(quantity)
 
-              return Promise.all([
-                snapResult.update(
+                return Promise.all([
+                  snapResult.update(
+                    {
+                      snapStatus: '恭喜搶到商品',
+                      dbProcessDate: responseDate,
+                      restStock: restStock
+                    },
+                    {
+                      where: { name: clientName },
+                      returning: true,
+                      transaction: t1
+                    }
+                  ),
+                  // 更新商品庫存
+                  Product.update(
+                    {
+                      quantity: restStock
+                    },
+                    { where: { productname: productName }, transaction: t1 }
+                  )
+                ]).catch((err) => {
+                  console.log('Update product or get product err:', err)
+                })
+              }
+              // 餘額不足
+              if (Number(amount) < Number(price)) {
+                // 紀錄 db 處理訂單時間
+                responseTime = recordTime()
+                responseDate = responseTime[0]
+                await snapResult.update(
                   {
-                    snapStatus: '恭喜搶到商品',
+                    snapStatus: '餘額不足',
                     dbProcessDate: responseDate,
                     restStock: restStock
                   },
                   {
                     where: { name: clientName },
                     returning: true,
-                    transaction: t1
+                    transaction: t2
                   }
-                ),
-                // 更新商品庫存
-                Product.update(
-                  {
-                    quantity: restStock
-                  },
-                  { where: { productname: productName }, transaction: t1 }
                 )
-              ]).catch((err) => {
-                console.log('Update product or get product err:', err)
-              })
+              }
+              // 庫存不足
+              if (Number(quantity) > Number(restStock)) {
+                // 紀錄 db 處理訂單時間
+                responseTime = recordTime()
+                responseDate = responseTime[0]
+                await snapResult.update(
+                  {
+                    snapStatus: '庫存不足',
+                    dbProcessDate: responseDate,
+                    restStock: restStock
+                  },
+                  {
+                    where: { name: clientName },
+                    returning: true,
+                    transaction: t2
+                  }
+                )
+              }
             }
-            // 餘額不足
-            if (Number(amount) < Number(price)) {
-              // 紀錄 db 處理訂單時間
-              responseTime = recordTime()
-              responseDate = responseTime[0]
-              await snapResult.update(
-                {
-                  snapStatus: '餘額不足',
-                  dbProcessDate: responseDate,
-                  restStock: restStock
-                },
-                {
-                  where: { name: clientName },
-                  returning: true,
-                  transaction: t2
-                }
-              )
-            }
-            // 庫存不足
-            if (Number(quantity) > Number(restStock)) {
-              // 紀錄 db 處理訂單時間
-              responseTime = recordTime()
-              responseDate = responseTime[0]
-              await snapResult.update(
-                {
-                  snapStatus: '庫存不足',
-                  dbProcessDate: responseDate,
-                  restStock: restStock
-                },
-                {
-                  where: { name: clientName },
-                  returning: true,
-                  transaction: t2
-                }
-              )
-            }
-          })
+          )
           .catch((err) => {
             console.log('Amount or reststock err:', err)
           })
@@ -186,23 +186,18 @@ async function snapStatusCheck(clientName, productName) {
 }
 
 // test case
-async function test() {
-  // 9366, 2
-  await snapStatusCheck('Darlene Stehr', '黃金脆皮雞腿排')
-  // 3910, 2
-  await snapStatusCheck('Ricardo Purdy', '黃金脆皮雞腿排')
-  // 8889, 1
-  await snapStatusCheck('Tonya Hermann', '黃金脆皮雞腿排')
-  // // 8954, 2
-  await snapStatusCheck('Lee Ward', '黃金脆皮雞腿排')
-  // // 8783, 3
-  await snapStatusCheck('Dr. Craig Mraz', '黃金脆皮雞腿排')
-  // // 2348, 2
-  await snapStatusCheck('Claude Romaguera', '黃金脆皮雞腿排')
-  // // 8639, 3
-  await snapStatusCheck("Isabel O'Reilly", '黃金脆皮雞腿排')
-}
-// test()
+// async function test() {
+//   // 1602, 2
+//   await snapStatusCheck('Wilbert Wilkinson', '黃金脆皮雞腿排')
+//   // 21, 2
+//   await snapStatusCheck('Michele Wehner', '黃金脆皮雞腿排')
+//   // 7534, 3
+//   await snapStatusCheck('Colleen Zemlak', '黃金脆皮雞腿排')
+//   // 7417, 1
+//   await snapStatusCheck('Nicolas Bernhard', '黃金脆皮雞腿排')
+//   // 1507, 2
+//   await snapStatusCheck('Edmund Tillman', '黃金脆皮雞腿排')
+// }
 
 export const handler = async (event) => {
   console.log('event:', event)

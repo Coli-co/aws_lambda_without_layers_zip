@@ -27,12 +27,8 @@ db.sequelize = sequelize
 sequelize.sync() //synchorize all models
 
 // connecting to model
-// db.clients = require('./client')(sequelize, DataTypes)
 const Product = productModel(sequelize, DataTypes)
 const Client = clientModel(sequelize, DataTypes)
 const snapResult = snapResultModel(sequelize, DataTypes)
-// const User = db.users
 
-// module.exports ={ db, Client, User }
-// export const Client = client
 export { Product, Client, snapResult, sequelize }
