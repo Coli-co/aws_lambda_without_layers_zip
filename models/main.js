@@ -9,7 +9,14 @@ import { snapResultModel } from './snapResult.js'
 
 const sequelize = new Sequelize(
   `postgres://${process.env.PGUSER}:${process.env.PGPASSWORD}@${process.env.PGHOST}:${process.env.PGPORT}/${process.env.PGDB}`,
-  { dialect: 'postgres', logging: false }
+  {
+    dialect: 'postgres',
+    logging: false,
+    retry: {
+      match: [Sequelize.DatabaseError],
+      max: 20
+    }
+  }
 )
 
 // checking connection

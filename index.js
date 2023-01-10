@@ -13,7 +13,7 @@ const configParams = {
   password: process.env.PGPASSWORD,
   port: process.env.PGPORT,
   // maximum number of clients the pool should contain,default:10
-  max: 20,
+  max: 30,
   // number of milliseconds to wait before timing out when connecting a new client, default : 0
   idleTimeoutMillis: 60000,
   // number of milliseconds a client must sit idle in the pool,  default is 10000 (10 seconds)
@@ -152,28 +152,40 @@ async function snapStatusCheck(clientName, productName) {
                   }
                 )
               }
-              // 庫存不足
-              if (Number(quantity) > Number(restStock)) {
-                // 紀錄 db 處理訂單時間
-                responseTime = recordTime()
-                responseDate = responseTime[0]
-                await snapResult.update(
+              return sequelize
+                .transaction(
                   {
-                    snapStatus: '庫存不足',
-                    dbProcessDate: responseDate,
-                    restStock: restStock
+                    isolationLevel:
+                      Sequelize.Transaction.ISOLATION_LEVELS.SERIALIZABLE
                   },
-                  {
-                    where: { name: clientName },
-                    returning: true,
-                    transaction: t2
+                  async (t3) => {
+                    // 庫存不足
+                    if (Number(quantity) > Number(restStock)) {
+                      // 紀錄 db 處理訂單時間
+                      responseTime = recordTime()
+                      responseDate = responseTime[0]
+                      await snapResult.update(
+                        {
+                          snapStatus: '庫存不足',
+                          dbProcessDate: responseDate,
+                          restStock: restStock
+                        },
+                        {
+                          where: { name: clientName },
+                          returning: true,
+                          transaction: t3
+                        }
+                      )
+                    }
                   }
                 )
-              }
+                .catch((err) => {
+                  'Restock err:', err
+                })
             }
           )
           .catch((err) => {
-            console.log('Amount or reststock err:', err)
+            console.log('Amount err:', err)
           })
       }
     )
@@ -186,18 +198,28 @@ async function snapStatusCheck(clientName, productName) {
 }
 
 // test case
-// async function test() {
-//   // 1602, 2
-//   await snapStatusCheck('Wilbert Wilkinson', '黃金脆皮雞腿排')
-//   // 21, 2
-//   await snapStatusCheck('Michele Wehner', '黃金脆皮雞腿排')
-//   // 7534, 3
-//   await snapStatusCheck('Colleen Zemlak', '黃金脆皮雞腿排')
-//   // 7417, 1
-//   await snapStatusCheck('Nicolas Bernhard', '黃金脆皮雞腿排')
-//   // 1507, 2
-//   await snapStatusCheck('Edmund Tillman', '黃金脆皮雞腿排')
-// }
+async function test() {
+  // // 4331, 2
+  // await snapStatusCheck('Ms Laura Beer', '黃金脆皮雞腿排')
+  // // 3576, 3
+  // await snapStatusCheck('Ivan Shields', '黃金脆皮雞腿排')
+  // // 1352, 1
+  // await snapStatusCheck('Nichole Weissnat', '黃金脆皮雞腿排')
+  // // 3336, 3
+  // await snapStatusCheck('Tina Gulgowski', '黃金脆皮雞腿排')
+  // // 1919, 3
+  // await snapStatusCheck('Mr Lisa Jakubowski', '黃金脆皮雞腿排')
+  // // 5998, 1
+  // await snapStatusCheck('Antonia Weissnat Jr', '黃金脆皮雞腿排')
+  // // 9585, 1
+  // await snapStatusCheck('Adam Jenkins', '黃金脆皮雞腿排')
+  // // 2224, 2
+  // await snapStatusCheck('Moses Tillman', '黃金脆皮雞腿排')
+  // // 664, 2
+  // await snapStatusCheck('Gregg Hilll PhD', '黃金脆皮雞腿排')
+  // // 9428, 3
+  // await snapStatusCheck('Adrian Rodriguez', '黃金脆皮雞腿排')
+}
 
 export const handler = async (event) => {
   console.log('event:', event)
